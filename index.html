@@ -176,6 +176,30 @@
   .node.locked{opacity:.32;}
   .node.boss{width:78px;height:78px;font-size:1.6rem;border-color:var(--ember);}
   .node.boss.reachable{box-shadow:0 0 0 3px rgba(224,90,60,.2);border-color:var(--ember-bright);}
+  .node{z-index:1;}
+  .map-edges{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;}
+  .edge-dim{stroke:var(--line);stroke-width:2;opacity:.55;}
+  .edge-active{stroke:var(--gold);stroke-width:3;opacity:.95;}
+  .edge-done{stroke:var(--moss-bright);stroke-width:2.5;opacity:.8;}
+  /* ---------- Class select ---------- */
+  .class-grid{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;}
+  .class-card{
+    width:190px;
+    background:var(--bg-panel-2);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:14px;
+    text-align:center;
+    cursor:pointer;
+    transition:border-color .15s, transform .1s;
+  }
+  .class-card:hover{border-color:var(--gold);}
+  .class-card:active{transform:scale(.97);}
+  .class-icon{font-size:1.8rem;margin-bottom:6px;}
+  .class-name{font-family:'Cinzel',serif;color:var(--gold);font-size:.95rem;margin-bottom:6px;}
+  .class-desc{font-size:.75rem;color:var(--ink-dim);line-height:1.5;margin-bottom:8px;}
+  .class-stats{font-size:.72rem;color:var(--ink);margin-bottom:6px;}
+  .class-deck{font-size:.65rem;color:var(--ink-dim);line-height:1.5;}
   /* ---------- Battle ---------- */
   .combat-field{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;}
   .fighter{
@@ -323,8 +347,67 @@ const CARD_LIB = {
   fortify:  {name:"굳히기", cost:2, type:"방어", desc:"방어도 12를 얻는다.", play:(s)=>{s.block+=12;}},
   bloodRite:{name:"혈맹의 대가", cost:1, type:"공격", desc:"체력 3을 잃고 11의 피해를 입힌다.", play:(s,e)=>{s.hp=Math.max(1,s.hp-3);dealDamage(e,11,s);}},
   adrenaline:{name:"아드레날린", cost:0, type:"방어", desc:"카드 2장을 뽑는다.", play:()=>{drawCards(2);}},
+  // ---- 마법사 계열: 소멸(exhaust) 자원을 태워 위력을 키우는 마법 ----
+  fireBolt:{name:"화염탄", cost:1, type:"마법", desc:"5의 피해 + 소멸한 카드 수 × 2 추가 피해.",
+    descFn:s=>`피해 ${5+2*(s.exhaustCount||0)} (기본 5 + 소멸 ${s.exhaustCount||0}장×2)`,
+    play:(s,e)=>{dealDamage(e, 5+2*(s.exhaustCount||0), s);}},
+  manaShield:{name:"마력 방벽", cost:1, type:"방어", desc:"방어도 7을 얻는다.", play:(s)=>{s.block+=7;}},
+  arcaneStudy:{name:"비전 탐구", cost:1, type:"마법", desc:"카드 2장을 뽑는다. (사용 후 소멸)", exhaustsSelf:true,
+    play:()=>{drawCards(2);}},
+  essenceDrain:{name:"정수 흡수", cost:0, type:"마법", desc:"방어도 3을 얻는다. (사용 후 소멸)", exhaustsSelf:true,
+    play:(s)=>{s.block+=3;}},
+  // ---- 도적 계열: 속도와 연계로 딜을 뽑는 카드 ----
+  backstab:{name:"기습", cost:1, type:"공격", desc:"10의 피해를 입힌다.", play:(s,e)=>{dealDamage(e,10,s);}},
+  comboStrike:{name:"연계 타격", cost:1, type:"공격", desc:"이번 턴 사용한 카드 수 × 2의 피해를 입힌다.",
+    descFn:s=>`피해 ${2*(((s.cardsPlayedThisTurn||0))+1)} 예상 (이번 턴 ${((s.cardsPlayedThisTurn||0))+1}번째 카드 기준)`,
+    play:(s,e)=>{dealDamage(e, 2*(s.cardsPlayedThisTurn||1), s);}},
+  // ---- 전사 및 공용 계열: 방어도를 자원으로 쓰는 카드 ----
+  riposte:{name:"받아치기", cost:1, type:"공격", desc:"현재 보유한 방어도만큼 피해를 입힌다.",
+    descFn:s=>`피해 ${s.block||0} (현재 방어도만큼, 방어도는 유지)`,
+    play:(s,e)=>{dealDamage(e, s.block||0, s);}},
 };
-const REWARD_POOL = ["heavyStrike","twinStrike","quickSlash","ironWall","battleFocus","poisonDagger","secondWind","cleave","fortify","bloodRite","adrenaline"];
+
+const COMMON_POOL = ["ironWall","secondWind","adrenaline","riposte"];
+const CLASS_POOLS = {
+  warrior: ["heavyStrike","cleave","fortify","bloodRite","twinStrike","riposte"],
+  rogue:   ["quickSlash","twinStrike","poisonDagger","backstab","comboStrike","adrenaline"],
+  mage:    ["fireBolt","manaShield","arcaneStudy","essenceDrain","battleFocus"]
+};
+
+const CLASSES = {
+  warrior:{name:"전사", icon:"⚔", hp:80,
+    desc:"굳건한 방패와 강한 일격으로 정면에서 맞서는 계열. 이후에도 강력한 단일 타격과 방어 카드 위주로 성장한다.",
+    deck:["strike","strike","strike","strike","defend","defend","defend","defend","heavyStrike"]},
+  rogue:{name:"도적", icon:"🗡", hp:65,
+    desc:"빠른 연속 공격과 독으로 상대를 무너뜨리는 계열. 이후 저비용 카드와 연계 피해 위주로 성장한다.",
+    deck:["quickSlash","quickSlash","quickSlash","strike","strike","defend","defend","poisonDagger","adrenaline"]},
+  mage:{name:"마법사", icon:"✦", hp:58,
+    desc:"카드를 소멸시켜 그 힘을 모아 강력한 마력을 터뜨리는 계열. 이후 소멸 시너지 마법 위주로 성장한다.",
+    deck:["fireBolt","fireBolt","manaShield","manaShield","strike","defend","arcaneStudy","essenceDrain"]}
+};
+
+function rewardPoolForClass(){
+  const klass = S.player && S.player.klass;
+  const classPool = CLASS_POOLS[klass] || [];
+  return [...classPool, ...classPool, ...COMMON_POOL];
+}
+
+function sampleUnique(weightedArr, n){
+  const seen = new Set();
+  const out = [];
+  for(const k of shuffle(weightedArr)){
+    if(seen.has(k)) continue;
+    seen.add(k);
+    out.push(k);
+    if(out.length>=n) break;
+  }
+  return out;
+}
+
+function cardDesc(key){
+  const c = CARD_LIB[key];
+  return (S.player && typeof c.descFn==="function") ? c.descFn(S.player) : c.desc;
+}
 
 const ENEMY_NAMES = ["동굴 박쥐","곰팡이 슬라임","녹슨 파수병","그림자 늑대","뼈다귀 도적","독니 거미"];
 const ELITE_NAMES = ["사슬 감시자","불타는 골렘","심연의 사도"];
@@ -358,10 +441,7 @@ function newRun(){
     act:0,                 // floor를 5로 나눈 구간
     map:null,
     currentNodeId:null,
-    player:{
-      hp:70, maxHp:70, gold:99, block:0,
-      deck: ["strike","strike","strike","strike","strike","defend","defend","defend","defend"]
-    },
+    player:null,           // 계열 선택 후 생성
     enemy:null,
     hand:[], drawPile:[], discardPile:[],
     energy:3, maxEnergy:3,
@@ -370,8 +450,25 @@ function newRun(){
     rewardOptions:null,
     pendingGold:0,
     eventData:null,
+    shopStock:null,
     best: Number(localStorage.getItem("depthcrawler_best")||0)
   };
+}
+
+function startClass(key){
+  const c = CLASSES[key];
+  if(!c) return;
+  S.player = {
+    klass:key,
+    hp:c.hp, maxHp:c.hp, gold:99, block:0,
+    deck:[...c.deck],
+    exhaustCount:0,
+    cardsPlayedThisTurn:0
+  };
+  S.act = 0; S.floor = 0;
+  startAct();
+  S.screen = "map";
+  render();
 }
 
 function logMsg(m){
@@ -467,6 +564,8 @@ function enterBattle(node){
   S.enemy = scaledEnemy(kind);
   rollIntent(S.enemy);
   S.player.block = 0;
+  S.player.exhaustCount = 0;
+  S.player.cardsPlayedThisTurn = 0;
   S.drawPile = shuffle([...S.player.deck]);
   S.discardPile = [];
   S.hand = [];
@@ -516,10 +615,16 @@ function playCard(idx){
   const card = CARD_LIB[cardKey];
   if(!card || S.energy < card.cost) return;
   S.energy -= card.cost;
+  S.player.cardsPlayedThisTurn = (S.player.cardsPlayedThisTurn||0) + 1;
   card.play(S.player, S.enemy);
   logMsg(`${card.name} 사용.`);
   S.hand.splice(idx,1);
-  S.discardPile.push(cardKey);
+  if(card.exhaustsSelf){
+    S.player.exhaustCount = (S.player.exhaustCount||0) + 1;
+    logMsg(`${card.name}이(가) 소멸했다.`);
+  } else {
+    S.discardPile.push(cardKey);
+  }
 
   if(S.enemy.hp<=0){
     winBattle();
@@ -560,6 +665,7 @@ function enemyTurn(){
   }
   // 다음 턴 준비
   S.player.block = 0;
+  S.player.cardsPlayedThisTurn = 0;
   S.discardPile.push(...S.hand);
   S.hand = [];
   S.energy = S.maxEnergy;
@@ -574,7 +680,7 @@ function winBattle(){
   const goldGain = S.enemy.isBoss? (60+S.act*20) : S.enemy.isElite? (30+S.floor*2) : (12+S.floor);
   S.pendingGold = goldGain;
   S.player.gold += goldGain;
-  const options = shuffle(REWARD_POOL).slice(0,3);
+  const options = sampleUnique(rewardPoolForClass(), 3);
   S.rewardOptions = options;
   S.screen = "reward";
   render();
@@ -583,7 +689,7 @@ function winBattle(){
 /* ============================== 노드 진행 ============================== */
 
 function addRandomCardToDeck(){
-  const k = pick(REWARD_POOL);
+  const k = pick(rewardPoolForClass());
   S.player.deck.push(k);
 }
 
@@ -628,7 +734,7 @@ function chooseNode(id){
 }
 
 function generateShopStock(){
-  return shuffle(REWARD_POOL).slice(0,3).map(k=>({key:k, price: 18 + Math.floor(Math.random()*20)}));
+  return sampleUnique(rewardPoolForClass(), 3).map(k=>({key:k, price: 18 + Math.floor(Math.random()*20)}));
 }
 
 function afterNodeResolved(){
@@ -657,6 +763,7 @@ function render(){
   let html = "";
   html += renderTopbar();
   if(S.screen==="intro") html += renderIntro();
+  else if(S.screen==="classselect") html += renderClassSelect();
   else if(S.screen==="map") html += renderMap();
   else if(S.screen==="battle") html += renderBattle();
   else if(S.screen==="reward") html += renderReward();
@@ -666,18 +773,42 @@ function render(){
   else if(S.screen==="gameover") html += renderGameOver();
   app.innerHTML = html;
   bindEvents();
+  if(S.screen==="map"){ requestAnimationFrame(drawMapEdges); }
 }
 
 function renderTopbar(){
-  if(S.screen==="intro") return "";
+  if(S.screen==="intro" || S.screen==="classselect" || !S.player) return "";
   return `
   <div class="topbar">
-    <div class="brand">DEPTHCRAWLER <small>층 ${S.floor}</small></div>
+    <div class="brand">DEPTHCRAWLER <small>층 ${S.floor} · ${CLASSES[S.player.klass].name}</small></div>
     <div class="stat-chip">
       <span>❤ <b>${S.player.hp}</b>/${S.player.maxHp}</span>
       <span>◆ <b>${S.player.gold}</b></span>
       <span>최고 <b>${S.best}</b></span>
     </div>
+  </div>`;
+}
+
+function renderClassSelect(){
+  const cards = Object.keys(CLASSES).map(key=>{
+    const c = CLASSES[key];
+    const counts = {};
+    c.deck.forEach(k=>{counts[k]=(counts[k]||0)+1;});
+    const deckLine = Object.entries(counts).map(([k,n])=>`${CARD_LIB[k].name}×${n}`).join(", ");
+    return `
+    <div class="class-card" data-class="${key}">
+      <div class="class-icon">${c.icon}</div>
+      <div class="class-name">${c.name}</div>
+      <div class="class-desc">${c.desc}</div>
+      <div class="class-stats">체력 ${c.hp}</div>
+      <div class="class-deck">${deckLine}</div>
+    </div>`;
+  }).join("");
+  return `
+  <div class="screen intro">
+    <h2 style="color:var(--gold);">계열을 선택하라</h2>
+    <p class="center-text" style="max-width:44ch;">선택한 계열에 따라 시작 카드가 달라지고, 이후 전투에서 얻는 카드도 그 계열의 방향으로 이어진다.</p>
+    <div class="class-grid">${cards}</div>
   </div>`;
 }
 
@@ -718,16 +849,52 @@ function renderMap(){
   return `
   <div class="screen">
     <div class="map-title"><h2>Act ${S.act+1} — 갈림길</h2><span>덱 ${S.player.deck.length}장</span></div>
-    <div class="map-track">${rowsHtml}</div>
+    <div class="map-track"><svg class="map-edges"></svg>${rowsHtml}</div>
   </div>`;
 }
+
+function drawMapEdges(){
+  const track = document.querySelector(".map-track");
+  if(!track || !S.map) return;
+  const svg = track.querySelector(".map-edges");
+  if(!svg) return;
+  const rect = track.getBoundingClientRect();
+  if(rect.width===0) return;
+  svg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
+  svg.innerHTML = "";
+  const centers = {};
+  track.querySelectorAll(".node").forEach(el=>{
+    const r = el.getBoundingClientRect();
+    centers[el.dataset.node] = {x: r.left - rect.left + r.width/2, y: r.top - rect.top + r.height/2};
+  });
+  const reach = reachableNodeIds();
+  const ns = "http://www.w3.org/2000/svg";
+  S.map.rows.forEach(row=>{
+    row.forEach(n=>{
+      (n.next||[]).forEach(nid=>{
+        const a = centers[n.id], b = centers[nid];
+        if(!a || !b) return;
+        const nextNode = findNode(nid);
+        let cls = "edge-dim";
+        if(n.done && nextNode && nextNode.done) cls = "edge-done";
+        else if(n.id===S.currentNodeId && reach.includes(nid)) cls = "edge-active";
+        const line = document.createElementNS(ns,"line");
+        line.setAttribute("x1",a.x); line.setAttribute("y1",a.y);
+        line.setAttribute("x2",b.x); line.setAttribute("y2",b.y);
+        line.setAttribute("class",cls);
+        svg.appendChild(line);
+      });
+    });
+  });
+}
+window.addEventListener("resize", ()=>{ if(S && S.screen==="map") drawMapEdges(); });
 
 function cardHtml(key, idx, playable){
   const c = CARD_LIB[key];
   return `<div class="card ${playable?"playable":"unplayable"}" data-hand-idx="${idx}">
     <div class="cost">${c.cost}</div>
     <div class="cname">${c.name}</div>
-    <div class="cdesc">${c.desc}</div>
+    <div class="cdesc">${cardDesc(key)}</div>
     <div class="ctype">${c.type}</div>
   </div>`;
 }
@@ -772,7 +939,7 @@ function renderReward(){
     <div class="card playable" data-reward-idx="${i}">
       <div class="cost">${CARD_LIB[k].cost}</div>
       <div class="cname">${CARD_LIB[k].name}</div>
-      <div class="cdesc">${CARD_LIB[k].desc}</div>
+      <div class="cdesc">${cardDesc(k)}</div>
       <div class="ctype">${CARD_LIB[k].type}</div>
     </div>`).join("");
   return `
@@ -799,7 +966,7 @@ function renderRest(){
 function renderShop(){
   const items = S.shopStock.map((it,i)=>`
     <div class="shop-item">
-      <div class="desc"><b>${CARD_LIB[it.key].name}</b> — ${CARD_LIB[it.key].desc}</div>
+      <div class="desc"><b>${CARD_LIB[it.key].name}</b> — ${cardDesc(it.key)}</div>
       <button class="btn ${S.player.gold>=it.price?"primary":""}" data-shop-idx="${i}" ${S.player.gold<it.price?"disabled":""}>◆${it.price}</button>
     </div>`).join("");
   return `
@@ -843,8 +1010,9 @@ function renderGameOver(){
 
 function bindEvents(){
   app.querySelectorAll("[data-action='begin']").forEach(b=>b.onclick=()=>{
-    S.act=0; S.floor=0; startAct(); S.screen="map"; render();
+    S.screen="classselect"; render();
   });
+  app.querySelectorAll("[data-class]").forEach(b=>b.onclick=()=>startClass(b.dataset.class));
   app.querySelectorAll("[data-node]").forEach(b=>b.onclick=()=>chooseNode(b.dataset.node));
   app.querySelectorAll("[data-hand-idx]").forEach(b=>b.onclick=()=>{
     if(b.classList.contains("unplayable")) return;
